@@ -1,0 +1,40 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "praixis"
+version = "0.1.0"
+description = "Zero-dependency Python client for the Praixis Engine API"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Michael E. Ramirez A." }]
+keywords = ["praixis", "llm", "rag", "ai"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
+]
+# No runtime dependencies for the sync client - standard library only, by design.
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/mettjs/praixis-python"
+Repository = "https://github.com/mettjs/praixis-python"
+Issues = "https://github.com/mettjs/praixis-python/issues"
+
+[project.optional-dependencies]
+# The async client (praixis.AsyncPraixisClient) is built on httpx.
+async = ["httpx>=0.24"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["praixis"]
