@@ -79,6 +79,11 @@ client.chat.summarize_file(("notes.txt", "raw text here"))
 client.rag.upload("manual.pdf", collection_name="docs")
 client.rag.upload([("a.txt", "..."), ("b.txt", "...")], collection_name="docs")
 
+# Improved search: generate hypothetical questions in the background so plain,
+# conversational queries match formal/technical text better. The document is
+# searchable immediately; matching improves once generation finishes.
+client.rag.upload("ley.pdf", collection_name="docs", improved_search=True)
+
 # Ask a question grounded in a collection
 ans = client.rag.ask("What does the manual say about setup?", collection_name="docs")
 print(ans)

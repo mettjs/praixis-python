@@ -24,11 +24,17 @@ class AsyncRagResource:
         chunk_size: int = 2000,
         chunk_overlap: int = 150,
         chunking_strategy: Literal["semantic", "character"] = "semantic",
+        improved_search: bool = False,
     ) -> UploadResponse:
         """POST /rag-db/upload - ingest one or more documents into a collection.
 
         Each file may be a path, a ``(filename, content)`` pair, or a
         ``(filename, content, content_type)`` triple. Supports .pdf/.docx/.txt.
+
+        Set ``improved_search=True`` to enable hypothetical-question indexing:
+        questions are generated in the background after the upload returns (the
+        document is searchable immediately; natural-language matching improves
+        once generation finishes).
         """
         parts = to_parts(files, "files")
         fields = [
@@ -36,6 +42,7 @@ class AsyncRagResource:
             ("chunk_size", str(chunk_size)),
             ("chunk_overlap", str(chunk_overlap)),
             ("chunking_strategy", chunking_strategy),
+            ("improved_search", str(improved_search).lower()),
         ]
         return await self._t.upload(f"{_PREFIX}/upload", files=parts, fields=fields)
 
