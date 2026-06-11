@@ -58,7 +58,9 @@ client.chat.list_sessions()          # -> [session_id, ...]
 client.chat.get_history(session_id)  # -> {"session_id", "history": [...]}
 client.chat.clear_history(session_id)
 
-# Summarize an uploaded file (path, or (filename, content[, content_type]))
+# Summarize an uploaded file (path, or (filename, content[, content_type])).
+# Give the filename a .pdf/.docx/.txt extension — it's the primary format
+# signal; content_type is only the fallback for extension-less names.
 client.chat.summarize_file("report.pdf")
 client.chat.summarize_file(("notes.txt", "raw text here"))
 ```
@@ -83,7 +85,16 @@ client.rag.upload([("a.txt", "..."), ("b.txt", "...")], collection_name="docs")
 # conversational queries match formal/technical text better. The document is
 # searchable immediately; matching improves once generation finishes.
 client.rag.upload("ley.pdf", collection_name="docs", improved_search=True)
+```
 
+> **File inputs.** Each file may be a path, a `(filename, content)` pair, or a
+> `(filename, content, content_type)` triple. The filename is the document's
+> stored identity and the server's primary format signal, so prefer a
+> `.pdf`/`.docx`/`.txt` extension. For extension-less names the server falls
+> back to the declared content type (inferred from the extension when omitted),
+> then to the file's magic bytes.
+
+```python
 # Ask a question grounded in a collection
 ans = client.rag.ask("What does the manual say about setup?", collection_name="docs")
 print(ans)

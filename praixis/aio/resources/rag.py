@@ -29,7 +29,9 @@ class AsyncRagResource:
         """POST /rag-db/upload - ingest one or more documents into a collection.
 
         Each file may be a path, a ``(filename, content)`` pair, or a
-        ``(filename, content, content_type)`` triple. Supports .pdf/.docx/.txt.
+        ``(filename, content, content_type)`` triple. Supports .pdf/.docx/.txt;
+        the filename extension is the server's primary format signal, with the
+        declared content type as the fallback for extension-less names.
 
         Set ``improved_search=True`` to enable hypothetical-question indexing:
         questions are generated in the background after the upload returns (the
