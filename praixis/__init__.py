@@ -38,7 +38,7 @@ if TYPE_CHECKING:
     # Give type checkers / IDEs the symbol without importing httpx at runtime.
     from .aio import AsyncPraixisClient
 
-__version__ = "0.1.0"
+__version__ = "0.2.1"
 
 __all__ = [
     "PraixisClient",
