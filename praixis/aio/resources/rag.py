@@ -5,8 +5,8 @@ from __future__ import annotations
 from typing import Any, Literal
 
 from ..._files import FileInput, to_parts
-from ..._http import encode_path_segment, parse_event_stream
-from ...types import AskResponse, StatusMessage, UploadResponse
+from ..._http import encode_path_segment
+from ...types import AskResponse, Comparison, StatusMessage, Summary, UploadResponse
 from .._transport import AsyncTransport
 
 _PREFIX = "/rag-db"
@@ -57,16 +57,24 @@ class AsyncRagResource:
         n_results: int = 5,
         system_prompt: str | None = None,
         metadata_filter: dict | None = None,
+        response_format: Literal["text", "json"] = "text",
     ) -> AskResponse:
         """POST /rag-db/ask - answer a question grounded in a collection.
 
-        The endpoint streams ``text/event-stream``; we buffer it and return
-        ``{"answer", "sources", "session_id", "search_query"}``.
+        Sends ``stream=false`` and returns the server's buffered JSON body
+        ``{"session_id", "search_query", "sources", "content"}``. For
+        ``response_format="json"``, ``content`` is the model's raw JSON string.
+
+        ``metadata_filter`` restricts retrieval to a single source document; the
+        only honored key is ``source`` (e.g. ``{"source": "policy.pdf"}``). Any
+        other keys are ignored, not an error.
         """
         body: dict[str, Any] = {
             "collection_name": collection_name,
             "question": question,
             "n_results": n_results,
+            "response_format": response_format,
+            "stream": False,
         }
         if session_id is not None:
             body["session_id"] = session_id
@@ -74,14 +82,7 @@ class AsyncRagResource:
             body["system_prompt"] = system_prompt
         if metadata_filter is not None:
             body["metadata_filter"] = metadata_filter
-        raw = await self._t.request_json("POST", f"{_PREFIX}/ask", json_body=body, parse="text")
-        parsed = parse_event_stream(raw)
-        return {
-            "answer": parsed["text"],
-            "sources": parsed["sources"] or [],
-            "session_id": parsed["session_id"],
-            "search_query": parsed["search_query"],
-        }
+        return await self._t.request_json("POST", f"{_PREFIX}/ask", json_body=body)
 
     async def embed(self, text: str) -> dict:
         """POST /rag-db/embed - return the embedding vector for ``text``."""
@@ -108,15 +109,41 @@ class AsyncRagResource:
         name = encode_path_segment(filename)
         return await self._t.request_json("DELETE", f"{_PREFIX}/{coll}/files/{name}")
 
-    async def compare(self, collection_name: str, file_1: str, file_2: str) -> dict:
-        """POST /rag-db/knowledge_base/compare - compare two stored documents."""
-        body = {"collection_name": collection_name, "file_1": file_1, "file_2": file_2}
+    async def compare(
+        self,
+        collection_name: str,
+        file_1: str,
+        file_2: str,
+        *,
+        response_format: Literal["text", "json"] = "text",
+    ) -> Comparison:
+        """POST /rag-db/knowledge_base/compare - compare two stored documents.
+
+        Returns the server's buffered JSON body ``{"file_1", "file_2", "content"}``.
+        """
+        body = {
+            "collection_name": collection_name,
+            "file_1": file_1,
+            "file_2": file_2,
+            "response_format": response_format,
+        }
         return await self._t.request_json("POST", f"{_PREFIX}/knowledge_base/compare", json_body=body)
 
-    async def summarize_document(self, collection_name: str, filename: str) -> dict:
-        """GET /rag-db/knowledge_base/{collection_name}/files/{filename}/summary."""
+    async def summarize_document(
+        self,
+        collection_name: str,
+        filename: str,
+        *,
+        response_format: Literal["text", "json"] = "text",
+    ) -> Summary:
+        """GET /rag-db/knowledge_base/{collection_name}/files/{filename}/summary.
+
+        Returns the server's buffered JSON body ``{"filename", "content"}``.
+        """
         coll = encode_path_segment(collection_name)
         name = encode_path_segment(filename)
         return await self._t.request_json(
-            "GET", f"{_PREFIX}/knowledge_base/{coll}/files/{name}/summary"
+            "GET",
+            f"{_PREFIX}/knowledge_base/{coll}/files/{name}/summary",
+            params={"response_format": response_format},
         )

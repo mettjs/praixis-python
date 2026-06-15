@@ -20,7 +20,7 @@ class PraixisClient:
 
         client = PraixisClient("http://localhost:8080", "app-key")
         reply = client.chat.send("Hello")
-        print(reply["response"])
+        print(reply["content"])
     """
 
     def __init__(

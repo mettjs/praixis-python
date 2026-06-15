@@ -12,11 +12,10 @@ from typing import Any, TypedDict
 
 
 class ChatResponse(TypedDict):
-    # Shaped by the client from the streamed reply (the server sends
-    # text/event-stream, not JSON).
+    # The server's buffered (stream=false) JSON body. For response_format="json",
+    # ``content`` is the model's raw JSON string - parse it yourself.
     session_id: str | None
-    response: str
-    response_format: str
+    content: str
 
 
 class SessionHistory(TypedDict):
@@ -46,8 +45,22 @@ class UploadResponse(TypedDict):
 
 
 class AskResponse(TypedDict):
-    # Shaped by the client from the streamed reply.
-    answer: str
-    sources: list[str]
+    # The server's buffered (stream=false) JSON body. For response_format="json",
+    # ``content`` is the model's raw JSON string - parse it yourself.
     session_id: str | None
     search_query: str | None
+    sources: list[str]
+    content: str
+
+
+class Summary(TypedDict):
+    # Buffered body of file_summary and document summary endpoints.
+    filename: str
+    content: str
+
+
+class Comparison(TypedDict):
+    # Buffered body of the compare endpoint.
+    file_1: str
+    file_2: str
+    content: str

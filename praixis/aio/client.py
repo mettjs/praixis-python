@@ -18,7 +18,7 @@ class AsyncPraixisClient:
 
         async with AsyncPraixisClient("http://localhost:8080", "app-key") as client:
             reply = await client.chat.send("Hello")
-            print(reply["response"])
+            print(reply["content"])
 
     Args:
         base_url: Root URL of the API, e.g. ``http://localhost:8080``.

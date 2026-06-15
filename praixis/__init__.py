@@ -7,7 +7,7 @@ break it::
     from praixis import PraixisClient
 
     client = PraixisClient("http://localhost:8080", "your-api-key")
-    print(client.chat.send("Hello")["response"])
+    print(client.chat.send("Hello")["content"])
 
 An :class:`AsyncPraixisClient` is also available for async/await code. It is
 backed by httpx, the SDK's only (optional) dependency - install it with
@@ -17,7 +17,7 @@ you actually use the async client; ``import praixis`` alone never needs it::
     from praixis import AsyncPraixisClient
 
     async with AsyncPraixisClient("http://localhost:8080", "your-api-key") as client:
-        print((await client.chat.send("Hello"))["response"])
+        print((await client.chat.send("Hello"))["content"])
 """
 
 from __future__ import annotations
@@ -38,7 +38,7 @@ if TYPE_CHECKING:
     # Give type checkers / IDEs the symbol without importing httpx at runtime.
     from .aio import AsyncPraixisClient
 
-__version__ = "0.2.1"
+__version__ = "1.0.0"
 
 __all__ = [
     "PraixisClient",

@@ -45,13 +45,16 @@ client = PraixisClient("http://localhost:8080", "your-api-key")
 ```python
 # Start a conversation
 reply = client.chat.send("Hello, world!")
-print(reply["session_id"], reply["response"])
+print(reply["session_id"], reply["content"])
 
 # Continue it
 client.chat.send("And again?", session_id=reply["session_id"])
 
-# JSON-mode response, custom system prompt
-client.chat.send("List 3 colors", response_format="json", system_prompt="Be terse")
+# JSON-mode response, custom system prompt. "content" is still a string — the
+# model's raw JSON text — which you parse yourself.
+import json
+r = client.chat.send("List 3 colors", response_format="json", system_prompt="Be terse")
+colors = json.loads(r["content"])
 
 # Sessions
 client.chat.list_sessions()          # -> [session_id, ...]
@@ -65,14 +68,13 @@ client.chat.summarize_file("report.pdf")
 client.chat.summarize_file(("notes.txt", "raw text here"))
 ```
 
-> **Note on streaming:** the server streams chat and RAG answers as
-> `text/event-stream`, not JSON. This client buffers the full response and
-> parses the leading marker lines (`[SESSION_ID:...]`, and for RAG
-> `[SEARCH_QUERY:...]` / `[SOURCES:...]`) out of the body for you, so
-> `chat.send` returns `{"session_id", "response", "response_format"}` and
-> `rag.ask` returns `{"answer", "sources", "session_id", "search_query"}`.
-> Buffering is the right default for scripts and backends; token-by-token
-> iteration is not yet exposed.
+> **Note on buffering:** the server's generative endpoints can stream tokens or
+> return one buffered JSON body. This client always requests the buffered form
+> (it sends `stream=false`) — the right default for scripts and backends. The
+> answer is always under `content`: `chat.send` returns `{"session_id",
+> "content"}`, `rag.ask` returns `{"session_id", "search_query", "sources",
+> "content"}`, and `compare` / `summarize_document` / `summarize_file` return
+> `{..., "content"}`. Token-by-token iteration is not exposed by this client.
 
 ## RAG
 
@@ -97,16 +99,22 @@ client.rag.upload("ley.pdf", collection_name="docs", improved_search=True)
 ```python
 # Ask a question grounded in a collection
 ans = client.rag.ask("What does the manual say about setup?", collection_name="docs")
-print(ans)
+print(ans["content"], ans["sources"], ans["search_query"])
 
-# Embeddings, listing, deletion, compare, summarize
+# Restrict retrieval to one source document. Only the "source" key is honored;
+# any other keys are ignored (not an error).
+client.rag.ask("What is the notice period?", collection_name="docs",
+               metadata_filter={"source": "policy.pdf"})
+
+# Embeddings, listing, deletion, compare, summarize. compare/summarize_document
+# return {..., "content"} and accept an optional response_format.
 client.rag.embed("some text")
 client.rag.list_collections()
 client.rag.list_files("docs")
 client.rag.delete_file("docs", "a.txt")
 client.rag.delete_collection("docs")
-client.rag.compare("docs", "a.txt", "b.txt")
-client.rag.summarize_document("docs", "manual.pdf")
+client.rag.compare("docs", "a.txt", "b.txt")              # -> {"file_1", "file_2", "content"}
+client.rag.summarize_document("docs", "manual.pdf")       # -> {"filename", "content"}
 ```
 
 ## Error handling
