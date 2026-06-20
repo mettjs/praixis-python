@@ -7,7 +7,7 @@ from typing import Any, Literal
 from .._files import FileInput, to_parts
 from .._http import encode_path_segment
 from .._transport import Transport
-from ..types import AskResponse, Comparison, StatusMessage, Summary, UploadResponse
+from ..types import AskResponse, Comparison, SearchResponse, StatusMessage, Summary, UploadResponse
 
 _PREFIX = "/rag-db"
 
@@ -83,6 +83,30 @@ class RagResource:
         if metadata_filter is not None:
             body["metadata_filter"] = metadata_filter
         return self._t.request_json("POST", f"{_PREFIX}/ask", json_body=body)
+
+    def search(
+        self,
+        query: str,
+        *,
+        collection_name: str,
+        n_results: int = 5,
+    ) -> SearchResponse:
+        """POST /rag-db/search - retrieval only: ranked raw chunks, no LLM.
+
+        Returns the server's buffered JSON body ``{"collection_name", "query",
+        "n_results", "results", "score_type"}``, where each result is
+        ``{"source", "text", "score"}``. Unlike :meth:`ask` it does not
+        reformulate the query or call the model, so pass a standalone query. Use
+        it when you want the evidence and its scores to reason over yourself
+        (e.g. fusing these chunks with another source) instead of a finished
+        answer. ``score_type`` is ``"rrf"`` (hybrid pgvector backend) or
+        ``"similarity"`` (dense Chroma backend).
+        """
+        return self._t.request_json(
+            "POST",
+            f"{_PREFIX}/search",
+            json_body={"collection_name": collection_name, "query": query, "n_results": n_results},
+        )
 
     def embed(self, text: str) -> dict:
         """POST /rag-db/embed - return the embedding vector for ``text``."""

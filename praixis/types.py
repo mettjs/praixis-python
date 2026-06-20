@@ -53,6 +53,25 @@ class AskResponse(TypedDict):
     content: str
 
 
+class SearchResult(TypedDict):
+    # One ranked chunk from the retrieval-only search endpoint.
+    source: str  # filename the chunk came from
+    text: str  # the chunk's raw text
+    score: float  # ranking score; read against ``score_type``
+
+
+class SearchResponse(TypedDict):
+    # Buffered body of the retrieval-only search endpoint. ``score_type`` is
+    # "rrf" (hybrid pgvector backend; small values, higher is better) or
+    # "similarity" (dense Chroma backend; 0-1), telling you how to read each
+    # result's ``score``.
+    collection_name: str
+    query: str
+    n_results: int
+    results: list[SearchResult]
+    score_type: str
+
+
 class Summary(TypedDict):
     # Buffered body of file_summary and document summary endpoints.
     filename: str

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "praixis"
-version = "1.0.0"
+version = "1.1.0"
 description = "Zero-dependency Python client for the Praixis Engine API"
 readme = "README.md"
 requires-python = ">=3.10"

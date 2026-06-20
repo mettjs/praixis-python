@@ -9,7 +9,7 @@ A lightweight Python client for the Praixis Engine API, in both **sync** and
 - **`AsyncPraixisClient`** — async/await, built on `httpx` (the only optional
   dependency). Imported lazily, so the sync client stays dependency-free.
 - Same surface in both: resource-grouped `client.chat` and `client.rag` — chat
-  + file summary, and RAG ingest/ask/embed/compare.
+  + file summary, and RAG ingest/ask/search/embed/compare.
 
 > The companion Node.js client lives in its own repository.
 
@@ -105,6 +105,11 @@ print(ans["content"], ans["sources"], ans["search_query"])
 # any other keys are ignored (not an error).
 client.rag.ask("What is the notice period?", collection_name="docs",
                metadata_filter={"source": "policy.pdf"})
+
+# Retrieval only: ranked raw chunks, no LLM. Pass a standalone query (not reformulated).
+hits = client.rag.search("setup steps", collection_name="docs")
+for r in hits["results"]:
+    print(r["source"], r["score"], r["text"])  # hits["score_type"] is "rrf" or "similarity"
 
 # Embeddings, listing, deletion, compare, summarize. compare/summarize_document
 # return {..., "content"} and accept an optional response_format.
