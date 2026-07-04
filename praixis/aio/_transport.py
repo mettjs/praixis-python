@@ -13,6 +13,7 @@ same ``praixis`` exceptions regardless of which client they chose.
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from typing import Any, Literal
 
 import httpx
@@ -52,7 +53,7 @@ class AsyncTransport:
             raise self._error(resp)
         if parse == "text":
             # Streaming endpoints reply with text/event-stream, not JSON; return
-            # it decoded for ``_http.parse_event_stream`` to shape.
+            # it decoded.
             return resp.text
         if not resp.content:
             return None
@@ -97,6 +98,47 @@ class AsyncTransport:
         )
         return self._handle(resp, parse=parse)
 
+    async def _stream_response(self, method: str, path: str, **kwargs: Any) -> AsyncIterator[str]:
+        """Send a request and yield its body incrementally as decoded text chunks.
+
+        An async generator, so the request is sent on the first iteration;
+        connection and HTTP errors surface there with the same mapping as
+        buffered calls.
+        """
+        try:
+            async with self._client.stream(method, self.base_url + path, **kwargs) as resp:
+                if resp.status_code >= 400:
+                    # The body hasn't been read in stream mode; pull it in so
+                    # the error can carry the server's detail message.
+                    await resp.aread()
+                    raise self._error(resp)
+                async for text in resp.aiter_text():
+                    if text:
+                        yield text
+        except httpx.TimeoutException as exc:
+            raise APIConnectionError(f"failed to reach {self.base_url}: request timed out", cause=exc) from exc
+        except httpx.HTTPError as exc:
+            raise APIConnectionError(f"failed to reach {self.base_url}: {exc}", cause=exc) from exc
+
+    def request_stream(
+        self,
+        method: str,
+        path: str,
+        *,
+        json_body: Any | None = None,
+        params: dict[str, Any] | None = None,
+    ) -> AsyncIterator[str]:
+        """Like :meth:`request_json`, but yield the response body incrementally
+        as decoded text chunks, for the server's streamed (text/event-stream)
+        endpoints which are not JSON."""
+        return self._stream_response(
+            method,
+            path,
+            json=json_body,
+            params=self._clean(params),
+            headers=self._auth_headers(),
+        )
+
     async def upload(
         self,
         path: str,
@@ -118,6 +160,27 @@ class AsyncTransport:
             headers=self._auth_headers(),
         )
         return self._handle(resp, parse=parse)
+
+    def upload_stream(
+        self,
+        path: str,
+        *,
+        files: list[FilePart],
+        fields: list[FormField] | None = None,
+        params: dict[str, Any] | None = None,
+    ) -> AsyncIterator[str]:
+        """Like :meth:`upload`, but yield the response body incrementally as
+        decoded text chunks."""
+        httpx_files = [(field, (filename, content, content_type)) for field, filename, content, content_type in files]
+        data = {name: value for name, value in (fields or [])}
+        return self._stream_response(
+            "POST",
+            path,
+            files=httpx_files,
+            data=data,
+            params=self._clean(params),
+            headers=self._auth_headers(),
+        )
 
     async def aclose(self) -> None:
         await self._client.aclose()

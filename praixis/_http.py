@@ -37,41 +37,92 @@ def auth_headers(api_key: str) -> dict[str, str]:
     return {"X-API-Key": api_key} if api_key else {}
 
 
-# A streamed (text/event-stream) line of the form ``[KEY:value]``. The server
-# prefixes its streamed chat / RAG / summary responses with these marker lines
-# (e.g. [SESSION_ID:...], [SEARCH_QUERY:...], [SOURCES:a,b], [FILE:...],
-# [PROGRESS:...], [ERROR:...]) before emitting the generated text.
-_MARKER_RE = re.compile(r"^\[([A-Z_]+):(.*)\]$")
+# The server's streamed (text/event-stream) responses are NOT JSON. They begin
+# with zero or more single-line ``[KEY:value]`` markers and are followed by the
+# raw generated content:
+#
+#   [SESSION_ID:<id>]\n
+#   [SEARCH_QUERY:<query>]\n     (RAG ask only)
+#   [SOURCES:<a.txt,b.txt>]\n    (RAG ask only)
+#   [FILE:<filename>]\n          (file / document summary only)
+#   [PROGRESS:<message>]\n       (file summary, large docs; may repeat)
+#   [ERROR:<message>]\n          (in-stream failure; always before content)
+#   ...content tokens...
+#
+# Markers are emitted on their own ``\n``-terminated lines before any content,
+# so we peel complete marker lines off the head of the stream and treat
+# everything from the first non-marker byte onward as content.
+
+_STREAM_MARKER_KEYS = ("SESSION_ID", "SEARCH_QUERY", "SOURCES", "FILE", "PROGRESS", "ERROR")
+
+# A complete leading marker line: ``[KEY:value]\n``.
+_STREAM_MARKER_RE = re.compile(r"^\[(" + "|".join(_STREAM_MARKER_KEYS) + r"):([^\n]*)\]\n")
+
+# A buffer that is still a possible (incomplete) marker line: no ``\n`` yet.
+_PARTIAL_MARKER_RE = re.compile(r"^\[[A-Z_]*(:[^\n]*)?$")
 
 
-def parse_event_stream(text: str) -> dict[str, Any]:
-    """Parse a buffered ``text/event-stream`` body into markers + generated text.
+def _marker_event(key: str, value: str) -> dict[str, Any]:
+    if key == "SOURCES":
+        return {"type": "sources", "value": [s for s in value.split(",") if s]}
+    return {"type": key.lower(), "value": value}
 
-    The chat, RAG-ask and file-summary endpoints don't return JSON - they stream
-    plain text whose leading lines are ``[KEY:value]`` markers followed by the
-    model's output. Both transports buffer that body and hand it here so the two
-    clients shape streamed responses identically.
 
-    Returns a dict with the recognised markers (``session_id``, ``search_query``,
-    ``sources`` as a list, ``file``), the joined generated ``text``, and the raw
-    ``markers`` map for anything else (e.g. ``PROGRESS``/``ERROR``).
+class StreamEventAssembler:
+    """Incremental parser turning decoded text chunks into stream events.
+
+    ``feed`` each chunk as it arrives and yield the returned events; call
+    ``finish`` once the stream ends to flush anything still buffered. Events are
+    ``{"type", "value"}`` dicts: the marker events above (``sources`` carries a
+    ``list[str]``), then ``token`` events with the generated content. Shared by
+    the sync and async clients so the two shape streams identically.
     """
-    markers: dict[str, str] = {}
-    body_lines: list[str] = []
-    for line in text.split("\n"):
-        m = _MARKER_RE.match(line)
-        if m:
-            markers[m.group(1)] = m.group(2)
-        else:
-            body_lines.append(line)
 
-    sources_raw = markers.get("SOURCES")
-    sources = [s for s in sources_raw.split(",") if s] if sources_raw is not None else None
-    return {
-        "session_id": markers.get("SESSION_ID"),
-        "search_query": markers.get("SEARCH_QUERY"),
-        "sources": sources,
-        "file": markers.get("FILE"),
-        "text": "\n".join(body_lines).strip("\n"),
-        "markers": markers,
-    }
+    def __init__(self) -> None:
+        self._buffer = ""
+        self._in_content = False
+
+    def _drain_markers(self) -> list[dict[str, Any]]:
+        events: list[dict[str, Any]] = []
+        while (m := _STREAM_MARKER_RE.match(self._buffer)) is not None:
+            events.append(_marker_event(m.group(1), m.group(2)))
+            self._buffer = self._buffer[m.end():]
+        return events
+
+    def feed(self, chunk: str) -> list[dict[str, Any]]:
+        if self._in_content:
+            return [{"type": "token", "value": chunk}] if chunk else []
+        self._buffer += chunk
+        events = self._drain_markers()
+        # The buffer no longer starts with a complete marker. If it can't still
+        # grow into one either, the marker section is over: the rest is content.
+        if self._buffer and not _PARTIAL_MARKER_RE.match(self._buffer):
+            events.append({"type": "token", "value": self._buffer})
+            self._buffer = ""
+            self._in_content = True
+        return events
+
+    def finish(self) -> list[dict[str, Any]]:
+        events = self._drain_markers()
+        if self._buffer:
+            events.append({"type": "token", "value": self._buffer})
+            self._buffer = ""
+        return events
+
+
+def iter_stream_events(chunks):
+    """Turn an iterable of decoded text chunks into an iterator of events."""
+    assembler = StreamEventAssembler()
+    for chunk in chunks:
+        yield from assembler.feed(chunk)
+    yield from assembler.finish()
+
+
+async def aiter_stream_events(chunks):
+    """Async variant of :func:`iter_stream_events`."""
+    assembler = StreamEventAssembler()
+    async for chunk in chunks:
+        for event in assembler.feed(chunk):
+            yield event
+    for event in assembler.finish():
+        yield event

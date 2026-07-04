@@ -61,6 +61,20 @@ client.chat.list_sessions()          # -> [session_id, ...]
 client.chat.get_history(session_id)  # -> {"session_id", "history": [...]}
 client.chat.clear_history(session_id)
 
+# Per-session token usage. Counts the streamed answers (chat and RAG), RAG query
+# reformulation, and compaction calls; counters expire with the session.
+# estimated_context_tokens shows how close the session is to auto-compacting.
+usage = client.chat.get_usage(session_id)
+# -> {"session_id", "requests", "prompt_tokens", "completion_tokens",
+#     "total_tokens", "estimated_context_tokens"}
+
+# Compact a session on demand: fold older exchanges into an LLM-written summary
+# (the server also does this automatically near its context budget). Raises
+# APIError 400 when there's nothing to fold yet.
+client.chat.compact(session_id)
+# -> {"status", "session_id", "messages_before", "messages_after",
+#     "estimated_tokens_before", "estimated_tokens_after"}
+
 # Summarize an uploaded file (path, or (filename, content[, content_type])).
 # Give the filename a .pdf/.docx/.txt extension — it's the primary format
 # signal; content_type is only the fallback for extension-less names.
@@ -68,13 +82,46 @@ client.chat.summarize_file("report.pdf")
 client.chat.summarize_file(("notes.txt", "raw text here"))
 ```
 
-> **Note on buffering:** the server's generative endpoints can stream tokens or
-> return one buffered JSON body. This client always requests the buffered form
-> (it sends `stream=false`) — the right default for scripts and backends. The
-> answer is always under `content`: `chat.send` returns `{"session_id",
-> "content"}`, `rag.ask` returns `{"session_id", "search_query", "sources",
-> "content"}`, and `compare` / `summarize_document` / `summarize_file` return
-> `{..., "content"}`. Token-by-token iteration is not exposed by this client.
+### Streaming
+
+The server's generative endpoints accept a `stream` toggle. The buffered methods
+(`send`, `ask`, `summarize_file`, `compare`, `summarize_document`) send
+`stream=false` and return the server's native JSON — the right default for
+scripts and backends. The answer is always under `content`: `chat.send` returns
+`{"session_id", "content"}`, `rag.ask` returns `{"session_id", "search_query",
+"sources", "content"}`, and `compare` / `summarize_document` / `summarize_file`
+return `{..., "content"}`.
+
+For token-by-token output, use the streaming variants, which return an iterator
+of `{"type", "value"}` events. Marker events (`session_id`, `search_query`,
+`sources`, `file`, `progress`, `error`) arrive before the `token` events that
+carry content:
+
+```python
+for event in client.chat.stream("Tell me a story"):
+    if event["type"] == "token":
+        print(event["value"], end="", flush=True)
+    elif event["type"] == "session_id":
+        session_id = event["value"]
+
+# Every buffered generative method has a streaming sibling:
+#   client.rag.ask_stream(question, collection_name=...)   # session_id, search_query, sources, then tokens
+#   client.chat.summarize_file_stream(file)                 # file, [progress...], then tokens
+#   client.rag.compare_stream(coll, f1, f2)                 # tokens
+#   client.rag.summarize_document_stream(coll, filename)    # file, then tokens
+```
+
+On the async client the same methods yield events with `async for`:
+
+```python
+async for event in client.chat.stream("Tell me a story"):
+    if event["type"] == "token":
+        print(event["value"], end="", flush=True)
+```
+
+The request is sent on the first iteration, so connection and HTTP errors
+surface there. On the sync client the configured `timeout` bounds each read
+(an idle limit), not the stream's total duration.
 
 ## RAG
 

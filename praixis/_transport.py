@@ -9,8 +9,10 @@ Every request authenticates with the app-level ``X-API-Key`` header.
 
 from __future__ import annotations
 
+import codecs
 import json
 import uuid
+from collections.abc import Iterator
 from typing import Any, Literal
 from urllib import error as urllib_error
 from urllib import parse, request
@@ -70,12 +72,47 @@ class Transport:
             raise APIConnectionError(f"failed to reach {self.base_url}: {exc.reason}", cause=exc) from exc
         if parse == "text":
             # Streaming endpoints (chat / RAG ask / file summary) reply with a
-            # text/event-stream body, not JSON. Return it decoded for the caller
-            # to parse via ``_http.parse_event_stream``.
+            # text/event-stream body, not JSON. Return it decoded.
             return body.decode("utf-8") if body else ""
         if not body:
             return None
         return json.loads(body.decode("utf-8"))
+
+    def _stream_body(self, req: request.Request) -> Iterator[str]:
+        """Open ``req`` and yield its body incrementally as decoded text chunks.
+
+        A generator, so the request is sent on the first iteration; connection
+        and HTTP errors surface there with the same mapping as buffered calls.
+        The configured ``timeout`` applies per read - an idle bound, not a cap
+        on the stream's total duration.
+        """
+        try:
+            resp = request.urlopen(req, timeout=self.timeout)
+        except urllib_error.HTTPError as exc:
+            raise self._decode_error(exc) from None
+        except urllib_error.URLError as exc:
+            raise APIConnectionError(f"failed to reach {self.base_url}: {exc.reason}", cause=exc) from exc
+        decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+        try:
+            while True:
+                try:
+                    # read1: return whatever bytes are available instead of
+                    # blocking to fill the buffer - tokens flow as they arrive.
+                    raw = resp.read1(65536)
+                except OSError as exc:
+                    raise APIConnectionError(
+                        f"stream from {self.base_url} interrupted: {exc}", cause=exc
+                    ) from exc
+                if not raw:
+                    break
+                text = decoder.decode(raw)
+                if text:
+                    yield text
+            tail = decoder.decode(b"", True)
+            if tail:
+                yield tail
+        finally:
+            resp.close()
 
     # -- requests --------------------------------------------------------
 
@@ -96,6 +133,25 @@ class Transport:
         req = request.Request(self._url(path, params), data=data, method=method, headers=headers)
         return self._send(req, parse=parse)
 
+    def request_stream(
+        self,
+        method: str,
+        path: str,
+        *,
+        json_body: Any | None = None,
+        params: dict[str, Any] | None = None,
+    ) -> Iterator[str]:
+        """Like :meth:`request_json`, but yield the response body incrementally
+        as decoded text chunks, for the server's streamed (text/event-stream)
+        endpoints which are not JSON."""
+        headers = self._auth_headers()
+        data = None
+        if json_body is not None:
+            data = json.dumps(json_body).encode("utf-8")
+            headers["Content-Type"] = "application/json"
+        req = request.Request(self._url(path, params), data=data, method=method, headers=headers)
+        return self._stream_body(req)
+
     def upload(
         self,
         path: str,
@@ -111,6 +167,23 @@ class Transport:
         headers["Content-Type"] = f"multipart/form-data; boundary={boundary}"
         req = request.Request(self._url(path, params), data=body, method="POST", headers=headers)
         return self._send(req, parse=parse)
+
+    def upload_stream(
+        self,
+        path: str,
+        *,
+        files: list[FilePart],
+        fields: list[FormField] | None = None,
+        params: dict[str, Any] | None = None,
+    ) -> Iterator[str]:
+        """Like :meth:`upload`, but yield the response body incrementally as
+        decoded text chunks."""
+        boundary = f"----praixis{uuid.uuid4().hex}"
+        body = _encode_multipart(boundary, fields or [], files)
+        headers = self._auth_headers()
+        headers["Content-Type"] = f"multipart/form-data; boundary={boundary}"
+        req = request.Request(self._url(path, params), data=body, method="POST", headers=headers)
+        return self._stream_body(req)
 
 
 def _encode_multipart(boundary: str, fields: list[FormField], files: list[FilePart]) -> bytes:
