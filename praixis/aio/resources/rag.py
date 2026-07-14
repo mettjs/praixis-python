@@ -7,7 +7,19 @@ from typing import Any, Literal
 
 from ..._files import FileInput, to_parts
 from ..._http import aiter_stream_events, encode_path_segment
-from ...types import AskResponse, Comparison, SearchResponse, StatusMessage, StreamEvent, Summary, UploadResponse
+from ...types import (
+    AskResponse,
+    Comparison,
+    FileChunks,
+    QuestionRegeneration,
+    QuestionStatus,
+    SearchResponse,
+    StatusMessage,
+    StreamEvent,
+    Summary,
+    TextUploadResponse,
+    UploadResponse,
+)
 from .._transport import AsyncTransport
 
 _PREFIX = "/rag-db"
@@ -48,6 +60,79 @@ class AsyncRagResource:
             ("improved_search", str(improved_search).lower()),
         ]
         return await self._t.upload(f"{_PREFIX}/upload", files=parts, fields=fields)
+
+    async def upload_text(
+        self,
+        text: str,
+        filename: str,
+        *,
+        collection_name: str = "main",
+        chunk_size: int = 2000,
+        chunk_overlap: int = 150,
+        chunking_strategy: Literal["semantic", "character"] = "semantic",
+        improved_search: bool = False,
+    ) -> TextUploadResponse:
+        """POST /rag-db/upload_text - ingest raw text as a document.
+
+        For callers that already hold the content (scraped pages, database
+        records) - no file wrapping needed. Runs the same pipeline as
+        :meth:`upload` after text extraction, so the stored document works with
+        every other endpoint. ``filename`` becomes the document's stored
+        identity; re-using one replaces the prior document. Returns
+        ``{"status", "collection_name", "filename", "chunks_stored",
+        "improved_search"}``.
+        """
+        body: dict[str, Any] = {
+            "text": text,
+            "filename": filename,
+            "collection_name": collection_name,
+            "chunk_size": chunk_size,
+            "chunk_overlap": chunk_overlap,
+            "chunking_strategy": chunking_strategy,
+            "improved_search": improved_search,
+        }
+        return await self._t.request_json("POST", f"{_PREFIX}/upload_text", json_body=body)
+
+    async def get_chunks(self, collection_name: str, filename: str) -> FileChunks:
+        """GET /rag-db/{collection_name}/files/{filename}/chunks - stored chunks.
+
+        Returns the document's chunks in order (``{"chunk_index", "content"}``
+        each) - exactly what retrieval sees, useful for debugging why a search
+        returned what it did.
+        """
+        coll = encode_path_segment(collection_name)
+        name = encode_path_segment(filename)
+        return await self._t.request_json("GET", f"{_PREFIX}/{coll}/files/{name}/chunks")
+
+    async def question_status(self, collection_name: str, filename: str) -> QuestionStatus:
+        """GET /rag-db/{collection_name}/files/{filename}/questions - index status.
+
+        Returns ``{"collection_name", "filename", "total_chunks",
+        "questions_stored", "generation_pending"}``. ``generation_pending`` is
+        True while a background generation pass is running - poll this after
+        :meth:`regenerate_questions` (or an upload with
+        ``improved_search=True``) to see when matching is fully improved.
+        """
+        coll = encode_path_segment(collection_name)
+        name = encode_path_segment(filename)
+        return await self._t.request_json("GET", f"{_PREFIX}/{coll}/files/{name}/questions")
+
+    async def regenerate_questions(self, collection_name: str, filename: str) -> QuestionRegeneration:
+        """POST /rag-db/{collection_name}/files/{filename}/questions - backfill
+        or rebuild the hypothetical-question index for a stored document.
+
+        ``improved_search`` is no longer locked in at upload time: a fresh
+        question set is generated in the background, and the existing index is
+        replaced only once the new pass succeeds (poll :meth:`question_status`
+        for progress). Returns ``{"status": "scheduled", "collection_name",
+        "filename", "chunks"}``.
+
+        Raises :class:`praixis.APIError` with status 409 while a pass is
+        already running, or 400 when question indexing is disabled server-side.
+        """
+        coll = encode_path_segment(collection_name)
+        name = encode_path_segment(filename)
+        return await self._t.request_json("POST", f"{_PREFIX}/{coll}/files/{name}/questions")
 
     async def ask(
         self,

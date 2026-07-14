@@ -58,6 +58,17 @@ class CompactionResult(TypedDict):
     estimated_tokens_after: int
 
 
+class UndoResult(TypedDict):
+    # Response of DELETE /general-requests/chat/{session_id}/last. The removed
+    # exchange is the last user message plus the assistant reply that followed
+    # it (just the user message when generation failed).
+    status: str
+    session_id: str
+    removed_messages: int
+    undone_prompt: str  # the user message that was removed — handy for a retry
+    messages_remaining: int
+
+
 class StatusMessage(TypedDict, total=False):
     # The server's status payloads vary by route: some carry ``message``
     # (collection/file deletes), others ``detail`` (session deletes).
@@ -77,6 +88,51 @@ class UploadResponse(TypedDict):
     processed: int
     succeeded: int
     results: list[UploadedFileResult]
+
+
+class TextUploadResponse(TypedDict):
+    # Response of POST /rag-db/upload_text.
+    status: str
+    collection_name: str
+    filename: str
+    chunks_stored: int
+    improved_search: bool
+
+
+class FileChunk(TypedDict):
+    chunk_index: int
+    content: str
+
+
+class FileChunks(TypedDict):
+    # Response of GET /rag-db/{collection}/files/{filename}/chunks - the
+    # document's stored chunks in order, exactly as retrieval sees them.
+    status: str
+    collection_name: str
+    filename: str
+    total_chunks: int
+    chunks: list[FileChunk]
+
+
+class QuestionStatus(TypedDict):
+    # Response of GET /rag-db/{collection}/files/{filename}/questions.
+    # ``generation_pending`` is True while a background pass is running.
+    collection_name: str
+    filename: str
+    total_chunks: int
+    questions_stored: int
+    generation_pending: bool
+
+
+class QuestionRegeneration(TypedDict):
+    # Response of POST /rag-db/{collection}/files/{filename}/questions.
+    # ``status`` is "scheduled"; generation runs in the background - poll
+    # ``question_status`` for progress. ``chunks`` is how many chunks will be
+    # processed.
+    status: str
+    collection_name: str
+    filename: str
+    chunks: int
 
 
 class AskResponse(TypedDict):

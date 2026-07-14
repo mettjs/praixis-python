@@ -75,6 +75,13 @@ client.chat.compact(session_id)
 # -> {"status", "session_id", "messages_before", "messages_after",
 #     "estimated_tokens_before", "estimated_tokens_after"}
 
+# Undo the last exchange: removes the most recent user message and the assistant
+# reply that followed it, so you can retry or regenerate. Compaction summaries
+# are kept. Raises APIError 400 when there's no user message left to undo.
+undone = client.chat.undo_last_exchange(session_id)
+# -> {"status", "session_id", "removed_messages", "undone_prompt",
+#     "messages_remaining"}  — undone_prompt is the removed user message
+
 # Summarize an uploaded file (path, or (filename, content[, content_type])).
 # Give the filename a .pdf/.docx/.txt extension — it's the primary format
 # signal; content_type is only the fallback for extension-less names.
@@ -134,6 +141,11 @@ client.rag.upload([("a.txt", "..."), ("b.txt", "...")], collection_name="docs")
 # conversational queries match formal/technical text better. The document is
 # searchable immediately; matching improves once generation finishes.
 client.rag.upload("ley.pdf", collection_name="docs", improved_search=True)
+
+# Ingest raw text directly — no file wrapping. Same pipeline and options as
+# upload; the filename becomes the document's stored identity.
+client.rag.upload_text("full document text…", "faq-2026.txt", collection_name="docs")
+# -> {"status", "collection_name", "filename", "chunks_stored", "improved_search"}
 ```
 
 > **File inputs.** Each file may be a path, a `(filename, content)` pair, or a
@@ -167,6 +179,22 @@ client.rag.delete_file("docs", "a.txt")
 client.rag.delete_collection("docs")
 client.rag.compare("docs", "a.txt", "b.txt")              # -> {"file_1", "file_2", "content"}
 client.rag.summarize_document("docs", "manual.pdf")       # -> {"filename", "content"}
+
+# Inspect how a document was chunked — exactly what retrieval sees.
+ch = client.rag.get_chunks("docs", "manual.pdf")
+# -> {"status", "collection_name", "filename", "total_chunks",
+#     "chunks": [{"chunk_index", "content"}, ...]}
+
+# Question-index management: improved_search is no longer locked in at upload.
+# regenerate_questions rebuilds the index in the background, replacing the old
+# questions only once the new pass succeeds; poll question_status until
+# generation_pending is False. Raises APIError 409 while a pass is already
+# running, 400 when indexing is disabled server-side.
+client.rag.regenerate_questions("docs", "manual.pdf")
+# -> {"status": "scheduled", "collection_name", "filename", "chunks"}
+client.rag.question_status("docs", "manual.pdf")
+# -> {"collection_name", "filename", "total_chunks", "questions_stored",
+#     "generation_pending"}
 ```
 
 ## Error handling

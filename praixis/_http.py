@@ -52,6 +52,20 @@ def auth_headers(api_key: str) -> dict[str, str]:
 # Markers are emitted on their own ``\n``-terminated lines before any content,
 # so we peel complete marker lines off the head of the stream and treat
 # everything from the first non-marker byte onward as content.
+#
+# Items inside the comma-separated SOURCES value are escaped by the server
+# (v2.3.0+): ``%`` -> ``%25``, ``,`` -> ``%2C``, ``]`` -> ``%5D``, ``\n`` ->
+# ``%0A``, ``\r`` -> ``%0D``, so filenames containing those characters can't
+# corrupt the list or the marker line. Decoding applies the reverse
+# replacements with ``%25`` last.
+
+_SOURCE_UNESCAPES = (("%2C", ","), ("%5D", "]"), ("%0A", "\n"), ("%0D", "\r"), ("%25", "%"))
+
+
+def _decode_source(item: str) -> str:
+    for escaped, raw in _SOURCE_UNESCAPES:
+        item = item.replace(escaped, raw)
+    return item
 
 _STREAM_MARKER_KEYS = ("SESSION_ID", "SEARCH_QUERY", "SOURCES", "FILE", "PROGRESS", "ERROR")
 
@@ -64,7 +78,7 @@ _PARTIAL_MARKER_RE = re.compile(r"^\[[A-Z_]*(:[^\n]*)?$")
 
 def _marker_event(key: str, value: str) -> dict[str, Any]:
     if key == "SOURCES":
-        return {"type": "sources", "value": [s for s in value.split(",") if s]}
+        return {"type": "sources", "value": [_decode_source(s) for s in value.split(",") if s]}
     return {"type": key.lower(), "value": value}
 
 

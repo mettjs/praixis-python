@@ -8,7 +8,16 @@ from typing import Any, Literal
 from .._files import FileInput, to_part
 from .._http import encode_path_segment, iter_stream_events
 from .._transport import Transport
-from ..types import ChatResponse, CompactionResult, SessionHistory, SessionUsage, StatusMessage, StreamEvent, Summary
+from ..types import (
+    ChatResponse,
+    CompactionResult,
+    SessionHistory,
+    SessionUsage,
+    StatusMessage,
+    StreamEvent,
+    Summary,
+    UndoResult,
+)
 
 _PREFIX = "/general-requests"
 
@@ -156,6 +165,21 @@ class ChatResource:
         """
         sid = encode_path_segment(session_id)
         return self._t.request_json("POST", f"{_PREFIX}/chat/{sid}/compact")
+
+    def undo_last_exchange(self, session_id: str) -> UndoResult:
+        """DELETE /general-requests/chat/{session_id}/last - undo the last exchange.
+
+        Removes the most recent user message and the assistant reply that
+        followed it (or just the user message if generation failed), so you can
+        retry or regenerate. Compaction summaries are kept. Returns ``{"status",
+        "session_id", "removed_messages", "undone_prompt",
+        "messages_remaining"}``; ``undone_prompt`` is the removed user message.
+
+        Raises :class:`praixis.APIError` with status 400 when the session has no
+        user messages left to undo.
+        """
+        sid = encode_path_segment(session_id)
+        return self._t.request_json("DELETE", f"{_PREFIX}/chat/{sid}/last")
 
     def clear_history(self, session_id: str) -> StatusMessage:
         """DELETE /general-requests/chat/{session_id} - clear a session."""

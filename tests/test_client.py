@@ -35,6 +35,9 @@ def test_stream_parser() -> None:
     events = list(iter_stream_events(iter(["[SESSION_ID:s1]\n[SEARCH_QUERY:what is x?]\n[SOURCES:a.txt,b.txt]\n42"])))
     assert events[1] == {"type": "search_query", "value": "what is x?"}, events
     assert events[2] == {"type": "sources", "value": ["a.txt", "b.txt"]}, events
+    # Escaped source items: commas / percents / brackets in filenames survive.
+    events = list(iter_stream_events(iter(["[SOURCES:Q3%2C Final.pdf,50%25 off%5D.txt]\nok"])))
+    assert events[0] == {"type": "sources", "value": ["Q3, Final.pdf", "50% off].txt"]}, events
     # Brackets inside the content are not mistaken for markers.
     events = list(iter_stream_events(iter(["[SESSION_ID:z]\nSee item [3]."])))
     assert _tokens(events) == "See item [3].", events
@@ -100,6 +103,25 @@ class _Handler(BaseHTTPRequestHandler):
             if "stream=true" in self.path:
                 return self._stream("[FILE:policy.pdf]\nsummary text")
             return self._json(200, {"filename": "policy.pdf", "content": "summary text"})
+        if p.endswith("/chunks"):
+            return self._json(200, {
+                "status": "success",
+                "collection_name": "docs",
+                "filename": "policy.pdf",
+                "total_chunks": 2,
+                "chunks": [
+                    {"chunk_index": 0, "content": "part one"},
+                    {"chunk_index": 1, "content": "part two"},
+                ],
+            })
+        if p.endswith("/questions"):
+            return self._json(200, {
+                "collection_name": "docs",
+                "filename": "policy.pdf",
+                "total_chunks": 2,
+                "questions_stored": 10,
+                "generation_pending": False,
+            })
         return self._json(404, {"detail": "not found"})
 
     def do_DELETE(self):
@@ -108,7 +130,16 @@ class _Handler(BaseHTTPRequestHandler):
         # Path segments must be percent-encoded; a raw space would corrupt the
         # HTTP request line and never reach here intact.
         assert " " not in self.path, f"unencoded path segment: {self.path}"
-        if self.path.split("?")[0].startswith("/general-requests/"):
+        p = self.path.split("?")[0]
+        if p.startswith("/general-requests/") and p.endswith("/last"):
+            return self._json(200, {
+                "status": "success",
+                "session_id": p.rsplit("/", 2)[-2],
+                "removed_messages": 2,
+                "undone_prompt": "hi",
+                "messages_remaining": 1,
+            })
+        if p.startswith("/general-requests/"):
             return self._json(200, {"status": "success", "detail": "Session deleted."})
         return self._json(200, {"status": "success", "message": "deleted"})
 
@@ -181,6 +212,23 @@ class _Handler(BaseHTTPRequestHandler):
             })
         if p == "/rag-db/embed":
             return self._json(200, {"text": "hello", "dimensions": 2, "embedding": [0.1, 0.2]})
+        if p == "/rag-db/upload_text":
+            body = json.loads(raw)
+            assert body["chunking_strategy"] in ("semantic", "character"), body
+            return self._json(200, {
+                "status": "success",
+                "collection_name": body["collection_name"],
+                "filename": body["filename"],
+                "chunks_stored": 3,
+                "improved_search": body["improved_search"],
+            })
+        if p.endswith("/questions"):
+            return self._json(200, {
+                "status": "scheduled",
+                "collection_name": "docs",
+                "filename": "policy.pdf",
+                "chunks": 2,
+            })
         return self._json(404, {"detail": "not found"})
 
 
@@ -204,6 +252,9 @@ def main() -> int:
     assert u["estimated_context_tokens"] == 40, u
     c = client.chat.compact("abc")
     assert c["status"] == "success" and c["messages_after"] == 5, c
+    undo = client.chat.undo_last_exchange("abc")
+    assert undo["removed_messages"] == 2 and undo["undone_prompt"] == "hi", undo
+    assert undo["session_id"] == "abc" and undo["messages_remaining"] == 1, undo
     assert client.chat.clear_history("abc")["status"] == "success"
     summ = client.chat.summarize_file(("report.txt", "hello doc"))
     assert summ["content"] == "short" and summ["filename"] == "report.txt", summ
@@ -245,6 +296,18 @@ def main() -> int:
     assert _tokens(events) == "summary text", events
     assert client.rag.embed("hello")["dimensions"] == 2
     assert client.rag.list_collections() == ["main"]
+
+    # text ingestion + chunk inspection + question index management
+    txt = client.rag.upload_text("raw text here", "notes.txt", collection_name="docs", improved_search=True)
+    assert txt["chunks_stored"] == 3 and txt["filename"] == "notes.txt", txt
+    assert txt["improved_search"] is True, txt
+    ch = client.rag.get_chunks("docs", "policy.pdf")
+    assert ch["total_chunks"] == 2 and ch["chunks"][0]["chunk_index"] == 0, ch
+    assert ch["chunks"][1]["content"] == "part two", ch
+    qs = client.rag.question_status("docs", "policy.pdf")
+    assert qs["questions_stored"] == 10 and qs["generation_pending"] is False, qs
+    rq = client.rag.regenerate_questions("docs", "policy.pdf")
+    assert rq["status"] == "scheduled" and rq["chunks"] == 2, rq
     assert client.rag.delete_collection("docs")["status"] == "success"
     assert client.rag.delete_file("docs", "a.txt")["status"] == "success"
     # filename with a space must be percent-encoded into the path
